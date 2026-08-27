@@ -62,6 +62,17 @@ body{background:#0b0e14;
 .mas .row button{flex:1;background:none;border:1px solid var(--line2);border-radius:8px;
  padding:9px;font:inherit;font-size:12px;color:var(--tx2)}
 .mas .row button.pri{border-color:rgba(111,213,184,.5);color:var(--task)}
+.memo{border:1px solid var(--line);border-radius:3px;padding:12px 13px;margin-bottom:22px}
+.memo .lb{font-size:10px;letter-spacing:.24em;color:var(--tx3);margin-bottom:7px}
+.memo textarea{width:100%;background:none;border:1px solid var(--line2);border-radius:8px;
+ color:var(--tx);font:inherit;font-size:15px;line-height:1.5;padding:9px 10px;
+ min-height:64px;max-height:200px;resize:none;display:block}
+.memo textarea::placeholder{color:var(--tx3)}
+.memo textarea:focus{outline:none;border-color:rgba(111,213,184,.5)}
+.memo button{width:100%;margin-top:9px;background:none;border:1px solid rgba(111,213,184,.5);
+ border-radius:8px;padding:9px;font:inherit;font-size:12px;color:var(--task)}
+.memo button:disabled{border-color:var(--line2);color:var(--tx3);opacity:.5}
+.memo .note{font-size:11px;color:var(--tx3);margin-top:7px;min-height:15px}
 .day{margin-bottom:26px}
 .dh{display:flex;align-items:baseline;gap:10px;margin-bottom:10px;padding-bottom:7px;
  border-bottom:1px solid var(--line)}
@@ -177,6 +188,12 @@ body{background:#0b0e14;
     </div>
     <div class="day" id="d0"></div>
     <div class="day" id="d1"></div>
+    <div class="memo">
+      <div class="lb">メモ</div>
+      <textarea id="memoin" placeholder="なんでも。思いついたこと、あとで見返したいこと"></textarea>
+      <button id="memobtn" disabled>ジャーナルに送る</button>
+      <div class="note" id="memonote"></div>
+    </div>
   </main>
   <div class="handle hk" id="toToi"><span class="bar"></span>とい　↓</div>
 </section>
@@ -267,12 +284,14 @@ function paint(){
  b.textContent=!on()?"未設定":(busy?"送信中":(ST.q.length?"未送信 "+ST.q.length:"送信済"));
  b.classList.toggle("warn",on()&&!busy&&ST.q.length>0);
 }
+/* 貯められたら true。送り先が未設定なら false（呼んだ側で知らせる） */
 function push(it){
- if(!on())return;
+ if(!on())return false;
  it.at=new Date().toISOString();
  ST.q.push(it);
  if(ST.q.length>CAP)ST.q=ST.q.slice(-CAP);
  save();paint();later();
+ return true;
 }
 /* 少し待ってから送る。続けて答えたぶんは1回にまとめる */
 function later(){clearTimeout(timer);timer=setTimeout(()=>{timer=null;flush();},1200);}
@@ -281,6 +300,8 @@ function later(){clearTimeout(timer);timer=setTimeout(()=>{timer=null;flush();},
 function pack(items){
  const out=[],grp={};
  items.forEach(it=>{
+  /* メモは改行をそのまま残したいので text で渡す */
+  if(it.k==="memo"){out.push({at:it.at,text:"【メモ】"+it.text});return;}
   if(it.k!=="toi"){
    const ln=["【1マス完了】"+it.text];
    if(it.memo)ln.push(it.memo);
@@ -351,7 +372,42 @@ function boot(){load();paint();$("bsend").onclick=setup;flush();}
 return {boot:boot,flush:flush,
  toi:(q,c,a,e)=>push({k:"toi",q:q,c:c,a:a,e:e||null}),
  mas:(t,memo)=>push({k:"mas",text:flat(t),memo:String(memo==null?"":memo).trim()}),
+ memo:t=>push({k:"memo",text:String(t).trim()}),
+ count:()=>ST.q.length,
  next:next};
+})();
+
+/* ================= なんでもメモ ================= */
+/* 思いついたものをそのままジャーナルへ。
+   書きかけは端末に残るので、閉じても消えない。 */
+const MEMO=(()=>{
+const K="memo:v1";
+let draft="",noteT=null;
+function save(){try{localStorage.setItem(K,draft);}catch(e){}}
+function grow(){const t=$("memoin");t.style.height="auto";t.style.height=t.scrollHeight+"px";}
+function sync(){$("memobtn").disabled=!draft.trim();}
+function note(s,ms){
+ $("memonote").textContent=s;
+ clearTimeout(noteT);
+ if(ms)noteT=setTimeout(()=>{$("memonote").textContent="";},ms);
+}
+function send(){
+ const t=draft.trim();if(!t)return;
+ if(!SEND.memo(t)){note("右上の設定で送り先を決めると送れます");return;}
+ draft="";save();
+ const ta=$("memoin");ta.value="";grow();sync();
+ note("送ります…");
+ SEND.flush();
+ setTimeout(()=>note(SEND.count()?"あとで送ります。電波が戻ったら送られます":"ジャーナルに送りました",3500),1200);
+}
+function boot(){
+ try{draft=localStorage.getItem(K)||"";}catch(e){}
+ const ta=$("memoin");
+ ta.value=draft;grow();sync();
+ ta.oninput=()=>{draft=ta.value;save();grow();sync();};
+ $("memobtn").onclick=send;
+}
+return {boot:boot};
 })();
 
 /* ================= きょう ================= */
@@ -760,6 +816,7 @@ return {boot:boot,wake:wake};
 })();
 
 SEND.boot();
+MEMO.boot();
 KYOU.boot();
 TOI.boot();
 const startToi=location.search.indexOf("q")>=0||location.hash==="#q";
