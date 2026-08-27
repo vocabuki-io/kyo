@@ -1,0 +1,55 @@
+name: build
+
+on:
+  schedule:
+    - cron: "0 6 * * *"    # 15:00 JST（起床後）
+    - cron: "0 11 * * *"   # 20:00 JST（出勤前）
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: npm ci || npm install
+
+      # 1. カレンダーを取得 → data/raw.json
+      - name: fetch calendars
+        env:
+          ICS_URLS: ${{ secrets.ICS_URLS }}
+        run: node scripts/fetch.mjs
+
+      # 2. Claude に「今日の1マス」を選ばせる
+      - name: install claude code
+        continue-on-error: true
+        id: cc_install
+        run: curl -fsSL https://api.claude.com/install.sh | sh
+
+      - name: claude pass
+        id: cc
+        continue-on-error: true
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          claude -p "$(cat prompt.md)" --dangerously-skip-permissions
+
+      # 3. Claude が落ちても画面は出す
+      - name: fallback
+        if: steps.cc.outcome != 'success'
+        run: node scripts/fallback.mjs
+
+      - name: commit
+        run: |
+          git config user.name  "kyou-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add data/
+          git diff --staged --quiet || git commit -m "update $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push
