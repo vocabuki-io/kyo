@@ -37,15 +37,7 @@ jobs:
       - name: install claude code
         id: cc_install
         continue-on-error: true
-        run: |
-          curl -fsSL https://api.claude.com/install.sh | sh
-          # インストール先を探して PATH に通す
-          for p in "$HOME/.local/bin" "$HOME/.claude/bin" "$HOME/bin" "/usr/local/bin"; do
-            if [ -x "$p/claude" ]; then
-              echo "$p" >> "$GITHUB_PATH"
-              echo "claude を $p に見つけました"
-            fi
-          done
+        run: npm install -g @anthropic-ai/claude-code
 
       - name: claude pass
         id: cc
