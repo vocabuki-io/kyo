@@ -45,6 +45,7 @@ body{background:#0b0e14;
 .date{flex:1;font-size:12px;color:var(--tx2);padding-bottom:4px}
 #pk header button{background:none;border:1px solid var(--line2);border-radius:14px;
  padding:6px 11px;font:inherit;font-size:11px;color:var(--tx2)}
+#pk header button.warn{border-color:var(--now);color:var(--now)}
 #pk main{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px 20px 20px}
 .mas{border:1px solid rgba(111,213,184,.32);border-radius:3px;padding:14px 15px;margin-bottom:22px;
  background:linear-gradient(180deg,rgba(111,213,184,.09),rgba(111,213,184,.015))}
@@ -161,6 +162,7 @@ body{background:#0b0e14;
   <header>
     <div class="clock" id="clock">--:--</div>
     <div class="date" id="date"></div>
+    <button id="bsend">未設定</button>
     <button id="bpaste">貼り付け</button>
   </header>
   <main>
@@ -247,6 +249,87 @@ function sheet(html,onOk){
  $("so").onclick=()=>{if(onOk()!==false){$("sheet").classList.remove("on");KYOU.save();KYOU.render();}};
 }
 
+/* ================= ジャーナルに送る ================= */
+/* 答えたものを端末に貯めて、Workerにまとめて投げる。
+   電波がなくても消えない。失敗したぶんは次に成功したときに一緒に行く。 */
+const SEND=(()=>{
+const K="ingest:v1";
+const CAP=400;
+let ST={url:"",token:"",q:[]};
+let busy=false,last="",timer=null;
+function load(){try{const r=localStorage.getItem(K);if(r)ST=Object.assign(ST,JSON.parse(r));}catch(e){}
+ if(!Array.isArray(ST.q))ST.q=[];}
+function save(){try{localStorage.setItem(K,JSON.stringify(ST));}catch(e){}}
+const on=()=>!!(ST.url&&ST.token);
+const flat=s=>String(s==null?"":s).replace(/\s+/g," ").trim();
+function paint(){
+ const b=$("bsend");if(!b)return;
+ b.textContent=!on()?"未設定":(busy?"送信中":(ST.q.length?"未送信 "+ST.q.length:"送信済"));
+ b.classList.toggle("warn",on()&&!busy&&ST.q.length>0);
+}
+function push(it){
+ if(!on())return;
+ it.at=new Date().toISOString();
+ ST.q.push(it);
+ if(ST.q.length>CAP)ST.q=ST.q.slice(-CAP);
+ save();paint();later();
+}
+/* 少し待ってから送る。続けて答えたぶんは1回にまとめる */
+function later(){clearTimeout(timer);timer=setTimeout(()=>{timer=null;flush();},1200);}
+/* 貯まったものを、ジャーナルの1件ぶんに束ねる。
+   といの回答はその日ぶんで1件、1マスの完了は1件ずつ。 */
+function pack(items){
+ const out=[],grp={};
+ items.forEach(it=>{
+  if(it.k!=="toi"){out.push({at:it.at,text:it.text});return;}
+  const d=key(logical(new Date(it.at))),p=d.split("-");
+  if(!grp[d]){grp[d]={at:it.at,title:"【とい】"+(+p[1])+"/"+(+p[2]),lines:[]};out.push(grp[d]);}
+  grp[d].at=it.at;
+  grp[d].lines.push("・"+flat(it.q)+" → "+flat(it.a)+(it.e?" "+it.e:""));
+ });
+ return out;
+}
+function flush(){
+ clearTimeout(timer);timer=null;
+ if(busy||!on()||!ST.q.length)return Promise.resolve(false);
+ const n=ST.q.length,pay={entries:pack(ST.q.slice(0,n))};
+ const hd={"Content-Type":"application/json"};
+ /* ヘッダには半角しか入らない。日本語の合言葉は本文に入れて送る */
+ if(/^[\x20-\x7e]+$/.test(ST.token))hd["Authorization"]="Bearer "+ST.token;
+ else pay.token=ST.token;
+ busy=true;paint();
+ return fetch(ST.url+"/ingest",{method:"POST",keepalive:true,headers:hd,body:JSON.stringify(pay)})
+  .then(r=>r.text().then(t=>{
+   let j=null;try{j=JSON.parse(t);}catch(e){}
+   if(r.ok&&j&&j.ok){ST.q.splice(0,n);last="";return true;}
+   last=(j&&j.message)||(r.status===404?"アドレスが違います":"送れませんでした（"+r.status+"）");
+   return false;}))
+  .catch(()=>{last="繋がりません。電波かアドレスを見てください";return false;})
+  .then(v=>{busy=false;save();paint();if(v&&ST.q.length)later();return v;});
+}
+function setup(){
+ if(on()&&ST.q.length)flush();
+ const st=!on()?"まだ設定されていません":
+   (ST.q.length?("未送信が "+ST.q.length+" 件"+(last?"。"+last:"")):"貯まっているものはありません");
+ sheet('<h3>ジャーナルに送る</h3>'+
+  '<input id="fu" placeholder="https://journal-ingest.○○○.workers.dev" '+
+   'inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false">'+
+  '<input id="fk" placeholder="合言葉" autocapitalize="off" autocorrect="off" spellcheck="false">'+
+  '<div class="hint">'+esc(st)+'<br>合言葉を空にすると送信は止まります。<br>'+
+   '貯めたものは消えません。次に繋がったときに送られます。</div>',()=>{
+  ST.url=$("fu").value.trim().replace(/\/+$/,"");
+  ST.token=$("fk").value.trim();
+  save();paint();
+  if(on())flush();
+ });
+ $("fu").value=ST.url;$("fk").value=ST.token;
+}
+function boot(){load();paint();$("bsend").onclick=setup;flush();}
+return {boot:boot,flush:flush,
+ toi:(q,c,a,e)=>push({k:"toi",q:q,c:c,a:a,e:e||null}),
+ mas:t=>push({k:"mas",text:"【1マス完了】"+flat(t)})};
+})();
+
 /* ================= きょう ================= */
 const KYOU=(()=>{
 const K="kyou:v1";
@@ -329,7 +412,8 @@ $("mtx").onclick=$("medit").onclick=()=>{
 };
 $("mdone").onclick=()=>{const s=ST.mas||FMAS;if(!s)return;
  if(!ST.mas)ST.mas=FMAS;
- ST.masDone=!ST.masDone;ST.masDay=key(logical(new Date()));save();render();};
+ ST.masDone=!ST.masDone;ST.masDay=key(logical(new Date()));save();render();
+ if(ST.masDone)SEND.mas(ST.mas);};
 $("bpaste").onclick=()=>{
  sheet('<h3>まとめて入れる</h3><textarea id="fp" placeholder="8/18 15:00 起床&#10;8/18 22:00 motion シフト"></textarea>'+
   '<div class="hint">1行1件。「M/D HH:MM なに」の形。<br>時刻だけの行は今日あつかい。</div>',()=>{
@@ -546,11 +630,12 @@ function commit(){
  let a="__pass__";
  if(has()){a=(yn?yn+(draft.trim()?" / "+draft.trim():""):draft.trim());learn(draft.trim());}
  ST.log.push({t:nowS(),q:cur.q,c:cur.c,a:a,e:e});ST.asked.push(cur.q);
+ if(a!=="__pass__")SEND.toi(cur.q,cur.c,a,e);
  save();resetPad();next();
 }
 $("tskip").onclick=()=>{if(!cur)return;
  ST.log.push({t:nowS(),q:cur.q,c:cur.c,a:"__pass__",e:null});ST.asked.push(cur.q);save();next();};
-function next(){draft="";yn=null;cur=queue.shift()||null;render();}
+function next(){draft="";yn=null;cur=queue.shift()||null;render();if(!cur)SEND.flush();}
 $("tblog").onclick=()=>{
  const L=$("tlog");
  if(L.style.display==="block"){render();return;}
@@ -576,11 +661,15 @@ function boot(){load();queue=pick(3);next();}
 return {boot:boot,wake:wake};
 })();
 
+SEND.boot();
 KYOU.boot();
 TOI.boot();
 const startToi=location.search.indexOf("q")>=0||location.hash==="#q";
 show(startToi?"toi":"kyou",true);
-document.addEventListener("visibilitychange",()=>{if(!document.hidden&&face==="kyou")KYOU.render();});
+document.addEventListener("visibilitychange",()=>{
+ SEND.flush();
+ if(!document.hidden&&face==="kyou")KYOU.render();});
+window.addEventListener("pagehide",()=>SEND.flush());
 </script>
 </body>
 </html>
