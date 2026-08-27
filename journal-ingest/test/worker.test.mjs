@@ -8,12 +8,20 @@ import worker from "../src/index.js";
 
 const FILES = new Map();           // path -> {text, sha}
 let putCount = 0, conflictOnce = false;
+const DISPATCHED = [];
+let DISPATCH_STATUS = 204;
 const b64 = s => Buffer.from(s, "utf8").toString("base64");
 const unb64 = s => Buffer.from(s, "base64").toString("utf8");
 
 globalThis.fetch = async (url, init = {}) => {
   const u = new URL(url);
   const R = (o, st = 200) => new Response(JSON.stringify(o), { status: st, headers: { "Content-Type": "application/json" } });
+  const d = u.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/actions\/workflows\/([^/]+)\/dispatches$/);
+  if (d) {
+    DISPATCHED.push({ owner: d[1], repo: d[2], workflow: decodeURIComponent(d[3]), body: JSON.parse(init.body) });
+    if (DISPATCH_STATUS !== 204) return R({ message: "nope" }, DISPATCH_STATUS);
+    return new Response(null, { status: 204 });
+  }
   const m = u.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/contents\/(.+)$/);
   if (m) {
     const path = decodeURIComponent(m[3]);
@@ -130,6 +138,51 @@ r = await post({ text: "だめ", at: "2026-08-27T16:00:00Z" });
 j = await r.json();
 ok("502 と「書き込みに失敗」", r.status === 502 && j.error === "github" && j.message.startsWith("書き込みに失敗"), j);
 globalThis.fetch = realFetch;
+
+console.log("— 次の1マスを頼む");
+r = await post({}, "aikotoba-1234", "/next");
+j = await r.json();
+ok("200 dispatched", r.status === 200 && j.ok && j.dispatched === true, j);
+ok("kyo の build.yml を main で起動した",
+  DISPATCHED.length === 1 && DISPATCHED[0].repo === "kyo" && DISPATCHED[0].owner === "me" &&
+  DISPATCHED[0].workflow === "build.yml" && DISPATCHED[0].body.ref === "main", DISPATCHED);
+ok("理由が入る", DISPATCHED[0].body.inputs.reason === "mas-done", DISPATCHED[0].body);
+
+r = await post({}, "chigau", "/next");
+ok("合言葉が違えば起動しない", r.status === 401 && DISPATCHED.length === 1);
+
+DISPATCHED.length = 0;
+r = await worker.fetch(new Request("https://w.dev/next", {
+  method: "POST", headers: { Authorization: "Bearer aikotoba-1234" }, body: "{}"
+}), { ...ENV, APP_REPO: "kyou-app", APP_WORKFLOW: "mas.yml", APP_BRANCH: "prod", APP_OWNER: "hoka" });
+ok("行き先は差し替えられる",
+  DISPATCHED[0].owner === "hoka" && DISPATCHED[0].repo === "kyou-app" &&
+  DISPATCHED[0].workflow === "mas.yml" && DISPATCHED[0].body.ref === "prod", DISPATCHED[0]);
+
+DISPATCH_STATUS = 403;
+r = await post({}, "aikotoba-1234", "/next");
+j = await r.json();
+ok("権限が無ければ502で理由が出る",
+  r.status === 502 && j.error === "dispatch" && j.message.includes("Actions の権限"), j);
+DISPATCH_STATUS = 404;
+r = await post({}, "aikotoba-1234", "/next");
+ok("見つからなければ502", (await r.json()).message.includes("見つかりません"));
+DISPATCH_STATUS = 204;
+
+r = await worker.fetch(new Request("https://w.dev/next", {
+  method: "POST", headers: { Authorization: "Bearer x" }, body: "{}"
+}), { GITHUB_OWNER: "me", INGEST_TOKEN: "x" });
+j = await r.json();
+ok("トークンが無ければ500で名前が出る",
+  r.status === 500 && j.error === "not_configured" && j.message.includes("DISPATCH_TOKEN"), j);
+
+r = await worker.fetch(new Request("https://w.dev/next", {
+  method: "POST", headers: { Authorization: "Bearer x" }, body: "{}"
+}), { GITHUB_OWNER: "me", INGEST_TOKEN: "x", DISPATCH_TOKEN: "d" });
+ok("追記の設定が無くても /next は通る", r.status === 200);
+
+r = await worker.fetch(new Request("https://w.dev/"), ENV);
+ok("生存確認に canDispatch が出る", (await r.json()).canDispatch === true);
 
 console.log("\n===== 最終の 2026-08.md =====");
 console.log(FILES.get("2026-08.md").text);
