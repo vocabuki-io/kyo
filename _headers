@@ -1,0 +1,11 @@
+# Cloudflare Pages に渡す配信ヘッダ。
+
+# JSONを日本語のまま表示できるようにする。
+# Pages は .json を配るとき文字コードを名乗らないので、ブラウザで直接開くと
+# 日本語環境の既定（Shift_JIS系）で表示されて化ける。
+#
+# アプリの動作には影響しない。index.html は fetch(...).json() で読んでいて、
+# これは仕様上つねにUTF-8として解釈するため、この指定が無くても正しく読める。
+# 中身を目で確かめるとき（うまくいかないときの切り分け）のためのもの。
+/data/*
+  Content-Type: application/json; charset=utf-8
