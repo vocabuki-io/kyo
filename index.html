@@ -413,10 +413,10 @@ return {boot:boot};
 /* ================= きょう ================= */
 const KYOU=(()=>{
 const K="kyou:v1";
-/* doneKey … 完了させた1マスの目印（masAt、無ければ本文）
-   want    … 次の1マスを頼んだ時刻。0なら待っていない
-   asked   … Workerに頼めたか。err … 頼めなかった理由 */
-let ST={ev:[],hide:[],doneKey:"",want:0,asked:0,err:""};
+/* doneMas / doneAt … 完了させた1マスの本文と masAt
+   want  … 次の1マスを頼んだ時刻。0なら待っていない
+   asked … Workerに頼めたか。err … 頼めなかった理由 */
+let ST={ev:[],hide:[],doneMas:"",doneAt:"",want:0,asked:0,err:""};
 let FE=[],FMAS="",FWHY="",FMASAT="",FTASKS=[];
 const LIMIT=8*60*1000;   // これ以上待ったら、あきらめてもう一度たのめるようにする
 const WD=["日","月","火","水","木","金","土"];
@@ -441,9 +441,16 @@ function render(){
  draw($("d0"),k0,"きょう",true);
  draw($("d1"),k1,"あした",false);
 }
-/* 今出ている1マスの目印。これが doneKey と同じなら、もう終わらせたもの */
-const curKey=()=>FMASAT||FMAS;
-const waiting=()=>!curKey()||ST.doneKey===curKey();
+/* いま出ている1マスが、まだやっていないものかどうか。
+   本文が変わっていれば新しい。同じ本文でも masAt が変われば新しい。
+   どちらとも言えないときだけ待つ ── 迷ったら出す側に倒す。
+   止まったまま何も出ないより、出しすぎるほうがまだ直せる。 */
+function waiting(){
+ if(!FMAS)return true;                          // まだ1マスが無い
+ if(FMAS!==ST.doneMas)return false;             // 本文が違う
+ if(FMASAT&&FMASAT!==ST.doneAt)return false;    // 同じ本文でも印が新しい
+ return true;
+}
 
 function dur(sec){
  const m=Math.floor(sec/60);
@@ -494,7 +501,7 @@ function doneMas(){
  sheet('<h3>できた</h3><div class="hint">'+esc(m)+'</div>'+
   '<textarea id="fmemo" placeholder="なにをやった? どこまで進んだ?"></textarea>'+
   '<div class="hint">書かなくても送れます。ジャーナルに残って、次の1マスを選ぶ材料になります。</div>',()=>{
-  ST.doneKey=curKey();ST.want=Date.now();ST.asked=0;ST.err="";
+  ST.doneMas=FMAS;ST.doneAt=FMASAT;ST.want=Date.now();ST.asked=0;ST.err="";
   save();
   SEND.mas(m,$("fmemo").value);
   ask();
@@ -821,11 +828,19 @@ KYOU.boot();
 TOI.boot();
 const startToi=location.search.indexOf("q")>=0||location.hash==="#q";
 show(startToi?"toi":"kyou",true);
-document.addEventListener("visibilitychange",()=>{
+/* 戻ってきたときに読み直す。
+   iPhoneのホーム画面アプリは、裏に回るとタイマーが止まる。
+   戻りの合図は端末やiOSのバージョンで違い、visibilitychange が来ないこともある。
+   pageshow と focus も拾って、どれか1つでも来れば追いつくようにする。 */
+function resume(){
  SEND.flush();
  if(document.hidden)return;
  KYOU.refetch();
- if(face==="kyou")KYOU.render();});
+ if(face==="kyou")KYOU.render();
+}
+document.addEventListener("visibilitychange",resume);
+window.addEventListener("pageshow",resume);
+window.addEventListener("focus",resume);
 window.addEventListener("pagehide",()=>SEND.flush());
 </script>
 </body>
