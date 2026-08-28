@@ -141,6 +141,17 @@ node journal-ingest/test/worker.test.mjs
 
 偽のGitHubを相手に、Workerの中身をそのまま動かす。node以外は要らない。
 
+## コードを直したときは貼り直す
+
+Cloudflareのダッシュボードに貼って使っている場合、**このリポジトリの
+`src/index.js` を直しても、動いているWorkerは変わらない。**
+貼り付け直して Deploy するまで、古いコードのまま動き続ける。
+
+貼り直したかどうかは `GET /` で分かる。返ってくるJSONに、そのとき
+足したフィールド（今なら `canDispatch`）が入っていなければ古い。
+
+`wrangler deploy` で置いている場合は、その1回で入れ替わる。
+
 ## CLIから置きたいとき
 
 `wrangler.toml` があるので、`journal-ingest/` の中で次を打つ。
