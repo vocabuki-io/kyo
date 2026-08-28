@@ -2,6 +2,7 @@
  * journal-ingest ─ アプリ → Cloudflare Worker → journal リポジトリ
  *
  * きょう/とい で答えた内容を、journal リポジトリの YYYY-MM.md に追記する。
+ * ついでに「次の1マスを選び直して」を GitHub Actions に投げる。
  * Cloudflare の画面に、このファイルの中身をそのまま貼って使う。
  *
  * 必要な設定（Settings → Variables and Secrets）
@@ -15,9 +16,17 @@
  *   JOURNAL_DIR    Text  置き場所（例 "log"）。既定は リポジトリ直下
  *   ALLOWED_ORIGIN Text  許可する送信元。既定は "*"
  *
+ * 任意（次の1マスを頼むときだけ）
+ *   APP_REPO        Text    きょう/とい のリポジトリ。既定は "kyo"
+ *   APP_WORKFLOW    Text    起動するワークフロー。既定は "build.yml"
+ *   APP_BRANCH      Text    起動するブランチ。既定は "main"
+ *   APP_OWNER       Text    既定は GITHUB_OWNER
+ *   DISPATCH_TOKEN  Secret  Actions を起動できるトークン。既定は GITHUB_TOKEN
+ *
  * エンドポイント
  *   GET  /         生存確認。{"ok":true,...} を返す（合言葉は要らない）
  *   POST /ingest   追記。合言葉が要る（POST / でも同じ）
+ *   POST /next     次の1マスを選び直させる。合言葉が要る
  */
 
 const API = "https://api.github.com";
@@ -46,17 +55,25 @@ export default {
           ? env.GITHUB_OWNER + "/" + env.GITHUB_REPO
           : null,
         configured: !!(env.GITHUB_OWNER && env.GITHUB_REPO && env.GITHUB_TOKEN && env.INGEST_TOKEN),
+        canDispatch: !!(env.GITHUB_OWNER && env.INGEST_TOKEN && (env.DISPATCH_TOKEN || env.GITHUB_TOKEN)),
         time: new Date().toISOString()
       }, 200, origin);
     }
 
-    if (request.method !== "POST" || (path !== "/" && path !== "/ingest")) {
+    const isNext = path === "/next";
+    if (request.method !== "POST" || (path !== "/" && path !== "/ingest" && !isNext)) {
       return fail("not_found", "そのアドレスはありません", 404, origin);
     }
 
     // ---- 設定の確認 ----
-    for (const k of ["GITHUB_OWNER", "GITHUB_REPO", "GITHUB_TOKEN", "INGEST_TOKEN"]) {
+    const need = isNext
+      ? ["GITHUB_OWNER", "INGEST_TOKEN"]
+      : ["GITHUB_OWNER", "GITHUB_REPO", "GITHUB_TOKEN", "INGEST_TOKEN"];
+    for (const k of need) {
       if (!env[k]) return fail("not_configured", "Workerの設定が足りません（" + k + "）", 500, origin);
+    }
+    if (isNext && !(env.DISPATCH_TOKEN || env.GITHUB_TOKEN)) {
+      return fail("not_configured", "Workerの設定が足りません（DISPATCH_TOKEN）", 500, origin);
     }
 
     // ---- 本文を読む ----
@@ -71,6 +88,16 @@ export default {
     const given = bearer(request) || request.headers.get("x-ingest-token") || payload.token || "";
     if (!safeEqual(given, env.INGEST_TOKEN)) {
       return fail("bad_token", "合言葉が違います", 401, origin);
+    }
+
+    // ---- 次の1マスを選び直させる ----
+    if (isNext) {
+      try {
+        await dispatch(env);
+        return json({ ok: true, dispatched: true }, 200, origin);
+      } catch (e) {
+        return fail("dispatch", "次の1マスを頼めません（" + e.message + "）", 502, origin);
+      }
     }
 
     // ---- 書くものを組み立てる ----
@@ -160,6 +187,36 @@ function jst(v) {
 function filePath(env, at) {
   const dir = (env.JOURNAL_DIR || "").replace(/^\/+|\/+$/g, "");
   return (dir ? dir + "/" : "") + at.ym + ".md";
+}
+
+/* ================= 次の1マスを頼む ================= */
+
+/* きょう/とい のリポジトリのワークフローを起動する。
+   Claude がジャーナルとカレンダーを読み直して events.json を書き替え、
+   アプリはそれが出てくるのを待つ。 */
+async function dispatch(env) {
+  const owner = env.APP_OWNER || env.GITHUB_OWNER;
+  const repo = env.APP_REPO || "kyo";
+  const wf = env.APP_WORKFLOW || "build.yml";
+  const ref = env.APP_BRANCH || "main";
+
+  const r = await fetch(API + "/repos/" + owner + "/" + repo +
+    "/actions/workflows/" + encodeURIComponent(wf) + "/dispatches", {
+    method: "POST",
+    body: JSON.stringify({ ref, inputs: { reason: "mas-done" } }),
+    headers: {
+      "Authorization": "Bearer " + (env.DISPATCH_TOKEN || env.GITHUB_TOKEN),
+      "Accept": "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "Content-Type": "application/json",
+      "User-Agent": UA
+    }
+  });
+
+  if (r.status === 204) return;
+  if (r.status === 403 || r.status === 401) throw new Error("トークンに Actions の権限がありません");
+  if (r.status === 404) throw new Error(repo + " か " + wf + " が見つかりません");
+  throw new Error(await ghError(r));
 }
 
 /* ================= GitHubへの追記 ================= */

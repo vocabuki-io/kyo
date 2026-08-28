@@ -53,12 +53,26 @@ body{background:#0b0e14;
 .mas .tx{font-size:19px;line-height:1.4;word-break:break-word}
 .mas .tx.empty{color:var(--tx3);font-size:16px}
 .mas .why{font-size:11px;color:var(--tx3);margin-top:5px}
-.mas.done{border-color:var(--line2);background:none}
-.mas.done .tx{color:var(--tx3);text-decoration:line-through}
+.mas.wait{border-color:var(--line2);background:none}
+.mas .tx.thinking{color:var(--task)}
+.mas .row:empty{display:none}
+@keyframes blink{0%,100%{opacity:.35}50%{opacity:1}}
+.mas .tx.thinking .dot{animation:blink 1.3s infinite}
 .mas .row{display:flex;gap:8px;margin-top:12px}
 .mas .row button{flex:1;background:none;border:1px solid var(--line2);border-radius:8px;
  padding:9px;font:inherit;font-size:12px;color:var(--tx2)}
 .mas .row button.pri{border-color:rgba(111,213,184,.5);color:var(--task)}
+.memo{border:1px solid var(--line);border-radius:3px;padding:12px 13px;margin-bottom:22px}
+.memo .lb{font-size:10px;letter-spacing:.24em;color:var(--tx3);margin-bottom:7px}
+.memo textarea{width:100%;background:none;border:1px solid var(--line2);border-radius:8px;
+ color:var(--tx);font:inherit;font-size:15px;line-height:1.5;padding:9px 10px;
+ min-height:64px;max-height:200px;resize:none;display:block}
+.memo textarea::placeholder{color:var(--tx3)}
+.memo textarea:focus{outline:none;border-color:rgba(111,213,184,.5)}
+.memo button{width:100%;margin-top:9px;background:none;border:1px solid rgba(111,213,184,.5);
+ border-radius:8px;padding:9px;font:inherit;font-size:12px;color:var(--task)}
+.memo button:disabled{border-color:var(--line2);color:var(--tx3);opacity:.5}
+.memo .note{font-size:11px;color:var(--tx3);margin-top:7px;min-height:15px}
 .day{margin-bottom:26px}
 .dh{display:flex;align-items:baseline;gap:10px;margin-bottom:10px;padding-bottom:7px;
  border-bottom:1px solid var(--line)}
@@ -168,15 +182,18 @@ body{background:#0b0e14;
   <main>
     <div class="mas" id="mas">
       <div class="lb">きょうの1マス</div>
-      <div class="tx empty" id="mtx">タップして決める</div>
+      <div class="tx empty" id="mtx">読み込み中</div>
       <div class="why" id="mwhy"></div>
-      <div class="row">
-        <button id="mdone" class="pri">できた</button>
-        <button id="medit">変える</button>
-      </div>
+      <div class="row" id="mrow"></div>
     </div>
     <div class="day" id="d0"></div>
     <div class="day" id="d1"></div>
+    <div class="memo">
+      <div class="lb">メモ</div>
+      <textarea id="memoin" placeholder="なんでも。思いついたこと、あとで見返したいこと"></textarea>
+      <button id="memobtn" disabled>ジャーナルに送る</button>
+      <div class="note" id="memonote"></div>
+    </div>
   </main>
   <div class="handle hk" id="toToi"><span class="bar"></span>とい　↓</div>
 </section>
@@ -267,12 +284,14 @@ function paint(){
  b.textContent=!on()?"未設定":(busy?"送信中":(ST.q.length?"未送信 "+ST.q.length:"送信済"));
  b.classList.toggle("warn",on()&&!busy&&ST.q.length>0);
 }
+/* 貯められたら true。送り先が未設定なら false（呼んだ側で知らせる） */
 function push(it){
- if(!on())return;
+ if(!on())return false;
  it.at=new Date().toISOString();
  ST.q.push(it);
  if(ST.q.length>CAP)ST.q=ST.q.slice(-CAP);
  save();paint();later();
+ return true;
 }
 /* 少し待ってから送る。続けて答えたぶんは1回にまとめる */
 function later(){clearTimeout(timer);timer=setTimeout(()=>{timer=null;flush();},1200);}
@@ -281,7 +300,12 @@ function later(){clearTimeout(timer);timer=setTimeout(()=>{timer=null;flush();},
 function pack(items){
  const out=[],grp={};
  items.forEach(it=>{
-  if(it.k!=="toi"){out.push({at:it.at,text:it.text});return;}
+  /* メモは改行をそのまま残したいので text で渡す */
+  if(it.k==="memo"){out.push({at:it.at,text:"【メモ】"+it.text});return;}
+  if(it.k!=="toi"){
+   const ln=["【1マス完了】"+it.text];
+   if(it.memo)ln.push(it.memo);
+   out.push({at:it.at,lines:ln});return;}
   const d=key(logical(new Date(it.at))),p=d.split("-");
   if(!grp[d]){grp[d]={at:it.at,title:"【とい】"+(+p[1])+"/"+(+p[2]),lines:[]};out.push(grp[d]);}
   grp[d].at=it.at;
@@ -289,14 +313,18 @@ function pack(items){
  });
  return out;
 }
+/* ヘッダには半角しか入らない。日本語の合言葉は本文に入れて送る */
+function auth(pay){
+ const hd={"Content-Type":"application/json"};
+ if(/^[\x20-\x7e]+$/.test(ST.token))hd["Authorization"]="Bearer "+ST.token;
+ else pay.token=ST.token;
+ return hd;
+}
 function flush(){
  clearTimeout(timer);timer=null;
  if(busy||!on()||!ST.q.length)return Promise.resolve(false);
  const n=ST.q.length,pay={entries:pack(ST.q.slice(0,n))};
- const hd={"Content-Type":"application/json"};
- /* ヘッダには半角しか入らない。日本語の合言葉は本文に入れて送る */
- if(/^[\x20-\x7e]+$/.test(ST.token))hd["Authorization"]="Bearer "+ST.token;
- else pay.token=ST.token;
+ const hd=auth(pay);
  busy=true;paint();
  return fetch(ST.url+"/ingest",{method:"POST",keepalive:true,headers:hd,body:JSON.stringify(pay)})
   .then(r=>r.text().then(t=>{
@@ -306,6 +334,22 @@ function flush(){
    return false;}))
   .catch(()=>{last="繋がりません。電波かアドレスを見てください";return false;})
   .then(v=>{busy=false;save();paint();if(v&&ST.q.length)later();return v;});
+}
+/* 「次の1マスを選び直して」をWorkerに投げる。
+   true なら頼めた。文字列ならその理由で頼めなかった。
+   完了のメモがジャーナルに入ってからでないとClaudeが読めないので、先に送りきる。 */
+function next(){
+ return flush().then(()=>{
+  if(!on())return "ジャーナルの設定がまだです";
+  if(ST.q.length)return last||"完了のメモをまだ送れていません";
+  const pay={},hd=auth(pay);
+  return fetch(ST.url+"/next",{method:"POST",headers:hd,body:JSON.stringify(pay)})
+   .then(r=>r.text().then(t=>{
+    let j=null;try{j=JSON.parse(t);}catch(e){}
+    if(r.ok&&j&&j.ok)return true;
+    return (j&&j.message)||(r.status===404?"アドレスが違います":"頼めませんでした（"+r.status+"）");}))
+   .catch(()=>"繋がりません。電波かアドレスを見てください");
+ });
 }
 function setup(){
  if(on()&&ST.q.length)flush();
@@ -327,14 +371,54 @@ function setup(){
 function boot(){load();paint();$("bsend").onclick=setup;flush();}
 return {boot:boot,flush:flush,
  toi:(q,c,a,e)=>push({k:"toi",q:q,c:c,a:a,e:e||null}),
- mas:t=>push({k:"mas",text:"【1マス完了】"+flat(t)})};
+ mas:(t,memo)=>push({k:"mas",text:flat(t),memo:String(memo==null?"":memo).trim()}),
+ memo:t=>push({k:"memo",text:String(t).trim()}),
+ count:()=>ST.q.length,
+ next:next};
+})();
+
+/* ================= なんでもメモ ================= */
+/* 思いついたものをそのままジャーナルへ。
+   書きかけは端末に残るので、閉じても消えない。 */
+const MEMO=(()=>{
+const K="memo:v1";
+let draft="",noteT=null;
+function save(){try{localStorage.setItem(K,draft);}catch(e){}}
+function grow(){const t=$("memoin");t.style.height="auto";t.style.height=t.scrollHeight+"px";}
+function sync(){$("memobtn").disabled=!draft.trim();}
+function note(s,ms){
+ $("memonote").textContent=s;
+ clearTimeout(noteT);
+ if(ms)noteT=setTimeout(()=>{$("memonote").textContent="";},ms);
+}
+function send(){
+ const t=draft.trim();if(!t)return;
+ if(!SEND.memo(t)){note("右上の設定で送り先を決めると送れます");return;}
+ draft="";save();
+ const ta=$("memoin");ta.value="";grow();sync();
+ note("送ります…");
+ SEND.flush();
+ setTimeout(()=>note(SEND.count()?"あとで送ります。電波が戻ったら送られます":"ジャーナルに送りました",3500),1200);
+}
+function boot(){
+ try{draft=localStorage.getItem(K)||"";}catch(e){}
+ const ta=$("memoin");
+ ta.value=draft;grow();sync();
+ ta.oninput=()=>{draft=ta.value;save();grow();sync();};
+ $("memobtn").onclick=send;
+}
+return {boot:boot};
 })();
 
 /* ================= きょう ================= */
 const KYOU=(()=>{
 const K="kyou:v1";
-let ST={mas:"",masDone:false,masDay:"",ev:[],hide:[]};
-let FE=[],FMAS="",FWHY="",FTASKS=[];
+/* doneKey … 完了させた1マスの目印（masAt、無ければ本文）
+   want    … 次の1マスを頼んだ時刻。0なら待っていない
+   asked   … Workerに頼めたか。err … 頼めなかった理由 */
+let ST={ev:[],hide:[],doneKey:"",want:0,asked:0,err:""};
+let FE=[],FMAS="",FWHY="",FMASAT="",FTASKS=[];
+const LIMIT=8*60*1000;   // これ以上待ったら、あきらめてもう一度たのめるようにする
 const WD=["日","月","火","水","木","金","土"];
 function load(){try{const r=localStorage.getItem(K);if(r)ST=Object.assign(ST,JSON.parse(r));}catch(e){}}
 function save(){try{localStorage.setItem(K,JSON.stringify(ST));}catch(e){}}
@@ -353,16 +437,81 @@ function render(){
  const k0=key(ld),k1=key(tm);
  $("date").innerHTML=(ld.getMonth()+1)+"/"+ld.getDate()+"（"+WD[ld.getDay()]+"）"+
   (n.getHours()<BOUND?"<br><span style='color:#5a6880'>まだ前日あつかい</span>":"");
- if(ST.masDay!==k0)ST.masDone=false;
- const shown=ST.mas||FMAS||"";
- const mt=$("mtx");mt.textContent=shown||"タップして決める";
- mt.classList.toggle("empty",!shown);
- $("mwhy").textContent=(!ST.mas&&FMAS&&FWHY)?FWHY:"";
- $("mas").classList.toggle("done",!!ST.masDone&&!!shown);
- $("mdone").textContent=ST.masDone?"戻す":"できた";
+ renderMas();
  draw($("d0"),k0,"きょう",true);
  draw($("d1"),k1,"あした",false);
 }
+/* 今出ている1マスの目印。これが doneKey と同じなら、もう終わらせたもの */
+const curKey=()=>FMASAT||FMAS;
+const waiting=()=>!curKey()||ST.doneKey===curKey();
+
+function dur(sec){
+ const m=Math.floor(sec/60);
+ return m?(m+"分"+(sec%60)+"秒"):(sec+"秒");
+}
+/* 待っているあいだは毎秒呼ばれる。
+   中身が変わったときだけ書き換える（点滅のアニメが毎秒やり直されないように） */
+function renderMas(){
+ const box=$("mas"),tx=$("mtx"),why=$("mwhy"),row=$("mrow");
+ const wait=waiting();
+ box.classList.toggle("wait",wait);
+
+ let cls="tx",txt=FMAS,html="",w=FWHY||"",btn="done";
+ if(wait){
+  const over=ST.want&&(Date.now()-ST.want>LIMIT);
+  cls="tx "+(ST.want&&ST.asked&&!over?"thinking":"empty");
+  w="";
+  if(ST.err){txt="頼めませんでした";w=ST.err;}
+  else if(!ST.want)txt="まだ決まっていない";
+  else if(over){txt="まだ出ていません";w="時間がかかっています。もう一度たのめます";}
+  else if(!ST.asked)txt="たのんでいます";
+  else{
+   txt="";html='Claudeが選んでいます<span class="dot">…</span>';
+   w="ジャーナルと予定を読み直しています（"+dur(Math.floor((Date.now()-ST.want)/1000))+"）";
+  }
+  btn=(!ST.want||over||ST.err)?"ask":"";
+ }
+
+ const k=cls+"|"+(html||txt);
+ if(tx.dataset.k!==k){
+  tx.dataset.k=k;tx.className=cls;
+  if(html)tx.innerHTML=html;else tx.textContent=txt;
+ }
+ why.textContent=w;
+
+ if(row.dataset.k!==btn){
+  row.dataset.k=btn;
+  row.innerHTML=btn==="done"?'<button id="mdone" class="pri">できた</button>':
+                btn==="ask" ?'<button id="mask" class="pri">1マスをたのむ</button>':"";
+  if(btn==="done")$("mdone").onclick=doneMas;
+  if(btn==="ask")$("mask").onclick=askNext;
+ }
+}
+
+/* できた → なにをやったか書く → ジャーナルに送る → 次をたのむ */
+function doneMas(){
+ const m=FMAS;if(!m)return;
+ sheet('<h3>できた</h3><div class="hint">'+esc(m)+'</div>'+
+  '<textarea id="fmemo" placeholder="なにをやった? どこまで進んだ?"></textarea>'+
+  '<div class="hint">書かなくても送れます。ジャーナルに残って、次の1マスを選ぶ材料になります。</div>',()=>{
+  ST.doneKey=curKey();ST.want=Date.now();ST.asked=0;ST.err="";
+  save();
+  SEND.mas(m,$("fmemo").value);
+  ask();
+ });
+ setTimeout(()=>{const e=$("fmemo");if(e)e.focus();},140);
+}
+function askNext(){
+ if(!ST.want)ST.want=Date.now();
+ ST.asked=0;ST.err="";save();renderMas();ask();
+}
+function ask(){
+ SEND.next().then(v=>{
+  ST.asked=(v===true)?1:0;ST.err=(v===true)?"":v;
+  save();renderMas();
+ });
+}
+
 function draw(box,dk,label,isToday){
  const list=evOf(dk),cur=nowMins();
  let ni=-1;if(isToday)ni=list.findIndex(e=>mins(e.t)>=cur);
@@ -403,17 +552,6 @@ function editEv(e){
  });
  setTimeout(()=>{const el=$(e.t?"fn":"ft");if(el)el.focus();},140);
 }
-$("mtx").onclick=$("medit").onclick=()=>{
- sheet('<h3>きょうの1マス</h3><input id="fm" placeholder="体がすぐ動くところまで割ったやつ" value="'+
-  (ST.mas?esc(ST.mas):(FMAS?esc(FMAS):""))+'">'+
-  '<div class="hint">1件だけ。これができたら今日は前進あつかい。</div>',()=>{
-  ST.mas=$("fm").value.trim();ST.masDone=false;ST.masDay=key(logical(new Date()));});
- setTimeout(()=>{const el=$("fm");if(el)el.focus();},140);
-};
-$("mdone").onclick=()=>{const s=ST.mas||FMAS;if(!s)return;
- if(!ST.mas)ST.mas=FMAS;
- ST.masDone=!ST.masDone;ST.masDay=key(logical(new Date()));save();render();
- if(ST.masDone)SEND.mas(ST.mas);};
 $("bpaste").onclick=()=>{
  sheet('<h3>まとめて入れる</h3><textarea id="fp" placeholder="8/18 15:00 起床&#10;8/18 22:00 motion シフト"></textarea>'+
   '<div class="hint">1行1件。「M/D HH:MM なに」の形。<br>時刻だけの行は今日あつかい。</div>',()=>{
@@ -430,14 +568,30 @@ $("bpaste").onclick=()=>{
  setTimeout(()=>{const el=$("fp");if(el)el.focus();},140);
 };
 function clean(){const l=new Date();l.setDate(l.getDate()-3);ST.ev=ST.ev.filter(e=>e.d>=key(l));}
+/* events.json を読み直す。新しい1マスが来ていたら、待つのをやめる */
+function refetch(){
+ return fetch("./data/events.json?"+Date.now()).then(r=>r.ok?r.json():null).then(j=>{
+  if(!j)return;
+  FE=j.events||[];FMAS=j.mas||"";FWHY=j.why||"";FMASAT=j.masAt||"";FTASKS=j.tasks||[];
+  if(ST.want&&!waiting()){ST.want=0;ST.asked=0;ST.err="";save();}
+  render();}).catch(()=>{});
+}
 function boot(){
  load();clean();render();
- fetch("./data/events.json?"+Date.now()).then(r=>r.ok?r.json():null).then(j=>{
-  if(!j)return;FE=j.events||[];FMAS=j.mas||"";FWHY=j.why||"";FTASKS=j.tasks||[];render();}).catch(()=>{});
- setInterval(()=>{if(face==="kyou")render();},30000);
+ refetch().then(()=>{
+  /* 前回たのめないまま閉じたぶんを、開いたときに拾う */
+  if(ST.want&&!ST.asked&&Date.now()-ST.want<LIMIT)ask();
+ });
+ let n=0;
+ setInterval(()=>{
+  n++;
+  if(ST.want){if(n%12===0)refetch();renderMas();return;}
+  if(face==="kyou"&&n%30===0)render();
+ },1000);
 }
 return {boot:boot,render:render,save:save,
- mas:function(){return ST.mas||FMAS||"";},
+ mas:function(){return waiting()?"":FMAS;},
+ refetch:refetch,
  events:function(){
   const n=new Date(),ld=logical(n),tm=new Date(ld);tm.setDate(tm.getDate()+1);
   const ks=[key(ld),key(tm)];
@@ -445,7 +599,7 @@ return {boot:boot,render:render,save:save,
  },
  tasks:function(){
   const a=FTASKS.slice();
-  const m=ST.mas||FMAS;if(m&&a.indexOf(m)<0)a.push(m);
+  if(FMAS&&a.indexOf(FMAS)<0)a.push(FMAS);
   return a;
  }};
 })();
@@ -662,13 +816,16 @@ return {boot:boot,wake:wake};
 })();
 
 SEND.boot();
+MEMO.boot();
 KYOU.boot();
 TOI.boot();
 const startToi=location.search.indexOf("q")>=0||location.hash==="#q";
 show(startToi?"toi":"kyou",true);
 document.addEventListener("visibilitychange",()=>{
  SEND.flush();
- if(!document.hidden&&face==="kyou")KYOU.render();});
+ if(document.hidden)return;
+ KYOU.refetch();
+ if(face==="kyou")KYOU.render();});
 window.addEventListener("pagehide",()=>SEND.flush());
 </script>
 </body>

@@ -7,8 +7,13 @@
 ```
 きょう/とい（Cloudflare Pages）
   └ 答えたものを端末に貯める（localStorage）
-       └ POST /ingest ─→ journal-ingest（Worker）
-                            └ GitHub Contents API ─→ journal/YYYY-MM.md
+       ├ POST /ingest ─→ journal-ingest（Worker）
+       │                    └ GitHub Contents API ─→ journal/YYYY-MM.md
+       └ POST /next   ─→ journal-ingest（Worker）
+                            └ workflow_dispatch ─→ kyo の build.yml
+                                                     └ Claude がジャーナルと
+                                                        カレンダーを読んで
+                                                        次の1マスを選ぶ
 ```
 
 書き込みはWorkerだけがやる。アプリはGitHubのトークンを持たない。
@@ -26,6 +31,14 @@
 | `GITHUB_BRANCH` | Text | 任意 | 既定はリポジトリの既定ブランチ |
 | `JOURNAL_DIR` | Text | 任意 | 既定はリポジトリ直下 |
 | `ALLOWED_ORIGIN` | Text | 任意 | 既定は `*` |
+| `APP_REPO` | Text | 任意 | アプリのリポジトリ。既定は `kyo` |
+| `APP_OWNER` | Text | 任意 | 既定は `GITHUB_OWNER` |
+| `APP_WORKFLOW` | Text | 任意 | 既定は `build.yml` |
+| `APP_BRANCH` | Text | 任意 | 既定は `main` |
+| `DISPATCH_TOKEN` | Secret | 任意 | Actions用の別トークン。既定は `GITHUB_TOKEN` |
+
+`/next` を使うなら、トークンに `kyo` の **Actions: Read and write** が要る。
+`GITHUB_TOKEN` に足すか、`DISPATCH_TOKEN` を別に置く。
 
 ## エンドポイント
 
@@ -37,7 +50,8 @@
 {"ok":true,"name":"journal-ingest","repo":"you/journal","configured":true,"time":"..."}
 ```
 
-`configured` が `false` なら、上の必須の変数が足りていない。
+`configured` が `false` なら、追記に必要な変数が足りていない。
+`canDispatch` が `false` なら、`/next` に必要なものが足りていない。
 
 ### `POST /ingest`
 
@@ -78,6 +92,31 @@
 | 413 | `too_large` | 送る内容が大きすぎます |
 | 500 | `not_configured` | Workerの設定が足りません（〜） |
 | 502 | `github` | 書き込みに失敗（〜） |
+
+### `POST /next`
+
+次の1マスを選び直させる。合言葉は `/ingest` と同じ渡しかた。本文は要らない。
+
+`kyo` の `build.yml` を `workflow_dispatch` で起こすだけで、すぐ返る。
+Claude が選び終わるまで待たない。アプリ側が `data/events.json` を見に行く。
+
+```json
+{"ok":true,"dispatched":true}
+```
+
+| status | error | message |
+|---|---|---|
+| 401 | `bad_token` | 合言葉が違います |
+| 500 | `not_configured` | Workerの設定が足りません（DISPATCH_TOKEN） |
+| 502 | `dispatch` | 次の1マスを頼めません（〜） |
+
+## 1マスの受け渡し
+
+`data/events.json` の `masAt` が、アプリが「次の1マスが出たか」を見分ける印。
+
+- `scripts/stamp.mjs` が、**`mas` が前回から変わったときだけ** `masAt` を打ち直す
+- アプリは完了させた `masAt` を覚えていて、それと違う `masAt` が来たら新しい1マスとして出す
+- 8分待っても変わらなければ「まだ出ていません」に変えて、たのみ直せるようにする
 
 ## 書きかた
 

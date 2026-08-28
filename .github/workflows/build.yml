@@ -5,6 +5,11 @@ on:
     - cron: "0 6 * * *"    # 15:00 JST（起床後）
     - cron: "0 11 * * *"   # 20:00 JST（出勤前）
   workflow_dispatch:
+    inputs:
+      reason:
+        description: "なぜ回したか（アプリからは mas-done）"
+        required: false
+        default: "manual"
 
 permissions:
   contents: write
@@ -33,7 +38,16 @@ jobs:
           fi
           node scripts/fetch.mjs
 
-      # 2. Claude に「今日の1マス」を選ばせる（失敗しても続行）
+      # 2. ジャーナルの直近を取る → journal.local.md（コミットしない）
+      #    トークンが無ければ空で進む。1マスの生成は止めない
+      - name: fetch journal
+        continue-on-error: true
+        env:
+          JOURNAL_TOKEN: ${{ secrets.JOURNAL_TOKEN }}
+          JOURNAL_REPO: ${{ vars.JOURNAL_REPO }}
+        run: node scripts/journal.mjs
+
+      # 3. Claude に「今やる1マス」を選ばせる（失敗しても続行）
       - name: install claude code
         id: cc_install
         continue-on-error: true
@@ -53,10 +67,14 @@ jobs:
           claude --version
           claude -p "$(cat prompt.md)" --dangerously-skip-permissions
 
-      # 3. Claude が動かなくても画面は出す
+      # 4. Claude が動かなくても画面は出す
       - name: fallback
         if: steps.cc.outcome != 'success'
         run: node scripts/fallback.mjs
+
+      # 5. 1マスが変わったときだけ masAt を打つ（アプリが「次が出た」を見分ける印）
+      - name: stamp
+        run: node scripts/stamp.mjs
 
       - name: commit
         run: |
@@ -66,6 +84,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "変更なし。commitしません"
           else
-            git commit -m "update $(date -u +%Y-%m-%dT%H:%MZ)"
+            git commit -m "update $(date -u +%Y-%m-%dT%H:%MZ) (${{ github.event_name }})"
             git push
           fi

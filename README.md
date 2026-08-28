@@ -12,26 +12,44 @@
 ## 仕組み
 
 ```
-GitHub Actions cron（15:00 / 20:00 JST）
-  → GoogleカレンダーのICSを取得        scripts/fetch.mjs → data/raw.json
-  → Claude が「今日の1マス」を選ぶ      prompt.md + tasks.md → data/events.json
+GitHub Actions（15:00 / 20:00 JST の cron ＋ 「できた」のたび）
+  → GoogleカレンダーのICSを取得        scripts/fetch.mjs  → data/raw.json
+  → journal の直近を取得               scripts/journal.mjs → journal.local.md
+  → Claude が「今やる1マス」を選ぶ      prompt.md + tasks.md → data/events.json
+  → 1マスが変わったら masAt を打つ      scripts/stamp.mjs
   → commit & push
   → index.html が data/events.json を読む
 ```
 
-Claudeが落ちても `scripts/fallback.mjs` が動くので、予定表示は止まらない。
+Claudeが落ちても `scripts/fallback.mjs` が動くので、予定表示も1マスも止まらない。
 
 答えたものは、逆向きに `journal` リポジトリへ流れる。
 
 ```
-とい で答える／1マスを「できた」にする
+とい で答える／1マスを「できた」にしてメモを書く／なんでもメモに書く
   → 端末に貯まる（電波がなくても消えない）
   → Cloudflare Worker（journal-ingest）
   → journal/YYYY-MM.md に追記
 ```
 
+ジャーナルに入ったものは、次の1マスを選ぶときにClaudeが読む。
+
 Workerだけが GitHub のトークンを持つ。アプリが持つのは合言葉だけ。
 置きかたは `journal-ingest/SETUP.md`、中身は `journal-ingest/README.md`。
+
+## 1マス
+
+**1マスはClaudeが決める。画面から手では書き換えない。**
+
+「できた」を押すと、なにをやったかを書く欄が出る。
+それがジャーナルに入り、そのままWorker経由でActionsが起きて、
+Claudeが**ジャーナルとカレンダーを読み直して**次の1マスを選ぶ。
+
+出るまで2〜4分かかる。そのあいだ画面は「Claudeが選んでいます」。
+アプリを閉じてよく、次に開いたときには出ている。
+8分すぎると「まだ出ていません」に変わり、たのみ直せる。
+
+`journal-ingest` を設置していない場合は、1マスは1日2回の cron でだけ入れ替わる。
 
 ## セットアップ
 
@@ -48,6 +66,7 @@ Googleカレンダー → 設定 → 対象カレンダー → 「カレンダ�
 |---|---|
 | `ICS_URLS` | `Motion\|https://...ics,ボカブキ\|https://...ics,彼女\|https://...ics` |
 | `CLAUDE_CODE_OAUTH_TOKEN` | `claude setup-token` で出る `sk-ant-oat01-...` |
+| `JOURNAL_TOKEN` | `journal` を読める Fine-grained PAT。無ければジャーナル無しで動く |
 
 `ICS_URLS` は `ラベル|URL` をカンマ区切り。ラベルは画面に小さく出る。
 
@@ -73,7 +92,8 @@ Cloudflare Pages に接続（ビルド設定なし／出力ディレクトリは
 
 - 予定の「＋」で追加、「×」で消す（自動取得分は非表示になるだけ）
 - 右上「貼り付け」で `8/18 22:00 なにか` の形をまとめて流し込める
-- 1マスはタップで上書き。手で決めたらClaudeの提案より優先される
+- 1マスは手で書き換えられない。違うものをやりたいときは「できた」でメモに書いて次を出す
+- いちばん下の「メモ」に何を書いても、そのままジャーナルに入る。書きかけは閉じても消えない
 - 右上の「送信済 / 未送信 N / 未設定」でジャーナル送信の状態が分かる。タップで設定と失敗した理由が出る
 
 
