@@ -1,0 +1,49 @@
+name: version
+
+# main が動くたびに index.html の VER を数え直す。
+# GITHUB_TOKEN で押した分は Actions を起こさない決まりなので、
+# ここが自分でコミットしても回り続けることはない。
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+# 続けてマージしたときに、この仕事どうしがぶつからないようにする。
+# build とは別グループ。build と重なった場合は下の押し直しで拾う。
+concurrency:
+  group: version
+  cancel-in-progress: false
+
+jobs:
+  stamp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # 数えるので履歴が全部要る
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: stamp version
+        id: v
+        run: node scripts/version.mjs
+
+      - name: commit
+        if: steps.v.outputs.changed == 'true'
+        run: |
+          git config user.name  "kyou-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add index.html
+          git commit -m "${{ steps.v.outputs.ver }}"
+          # build が先に押していたら弾かれる。取り直して載せ直す
+          for i in 1 2 3; do
+            if git push; then exit 0; fi
+            echo "押せなかった。取り直してやり直す（${i}回目）"
+            git pull --rebase origin main
+          done
+          echo "::error::3回試しても push できませんでした"
+          exit 1

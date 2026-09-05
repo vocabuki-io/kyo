@@ -262,7 +262,9 @@ body{background:#0a0d14;
 
 <script>
 const $=i=>document.getElementById(i);
-/* いま動いている版。マージのたびに1つ上げる（＝これまでのマージ回数） */
+/* いま動いている版＝これまでマージした回数。
+   マージのたびに .github/workflows/version.yml が数え直して書き換える。
+   手で触らない（scripts/version.mjs が同じ場所を書く） */
 const VER="v7";
 const BOUND=6;
 const pad2=n=>String(n).padStart(2,"0");

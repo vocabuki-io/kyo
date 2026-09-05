@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node journal-ingest/test/worker.test.mjs"
+    "test": "node journal-ingest/test/worker.test.mjs",
+    "ver": "node scripts/version.mjs"
   },
   "keywords": [],
   "author": "",

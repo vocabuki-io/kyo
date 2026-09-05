@@ -37,6 +37,22 @@ Claudeが落ちても `scripts/fallback.mjs` が動くので、予定表示も1�
 Workerだけが GitHub のトークンを持つ。アプリが持つのは合言葉だけ。
 置きかたは `journal-ingest/SETUP.md`、中身は `journal-ingest/README.md`。
 
+## バージョン
+
+日付の横に薄く出ている `v7` は、これまでマージした回数。
+手元で開いているものと、公開されているものが同じかを見分けるための印。
+
+数えるのは `scripts/version.mjs`。main が動くたびに
+`.github/workflows/version.yml` が数え直して `index.html` の `VER` を書き換える。
+手で上げない。
+
+コミット数ではない。cron が毎日 `data/` を更新するので、
+全コミット数だと1日に何度も上がってしまう。数えるのは
+マージ1回につき main に1つだけ残るもの ── squash merge なら
+件名が `… (#7)` で終わるコミット、merge commit なら親が2つのコミット。
+
+自分で数え直したいときは `npm run ver`。
+
 ## 1マス
 
 **1マスはClaudeが決める。画面から手では書き換えない。**
