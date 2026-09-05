@@ -72,9 +72,11 @@ body{background:#0a0d14;
 .mas.wait{box-shadow:none;background:rgba(255,255,255,.03)}
 .mas .tx.thinking{color:var(--task)}
 .mas .row:empty{display:none}
-.mas .note{font-size:11px;color:var(--tx3);margin-top:9px;line-height:1.6}
-.mas .note:empty{display:none}
-.mas .row button:disabled{opacity:.45}
+.day .note{font-size:11px;color:var(--tx3);margin-top:10px;line-height:1.6}
+.day .note:empty{display:none}
+.dh .sync{background:rgba(255,255,255,.07);border:1px solid var(--line2);border-radius:14px;
+ padding:7px 12px;font:inherit;font-size:11px;color:var(--tx2);flex:none}
+.dh .sync:disabled{opacity:.45}
 @keyframes blink{0%,100%{opacity:.35}50%{opacity:1}}
 .mas .tx.thinking .dot{animation:blink 1.3s infinite}
 .mas .row{display:flex;gap:8px;margin-top:12px}
@@ -219,7 +221,6 @@ body{background:#0a0d14;
       <div class="tx empty" id="mtx">読み込み中</div>
       <div class="why" id="mwhy"></div>
       <div class="row" id="mrow"></div>
-      <div class="note" id="msync"></div>
     </div>
     <div class="day" id="d0"></div>
     <div class="day" id="d1"></div>
@@ -261,6 +262,8 @@ body{background:#0a0d14;
 
 <script>
 const $=i=>document.getElementById(i);
+/* いま動いている版。マージのたびに1つ上げる（＝これまでのマージ回数） */
+const VER="v7";
 const BOUND=6;
 const pad2=n=>String(n).padStart(2,"0");
 const key=d=>d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate());
@@ -475,6 +478,7 @@ function render(){
  const ld=logical(n),tm=new Date(ld);tm.setDate(tm.getDate()+1);
  const k0=key(ld),k1=key(tm);
  $("date").innerHTML=(ld.getMonth()+1)+"/"+ld.getDate()+"（"+WD[ld.getDay()]+"）"+
+  "<span style='color:var(--dim);margin-left:7px'>"+VER+"</span>"+
   (n.getHours()<BOUND?"<br><span style='color:var(--tx3)'>まだ前日あつかい</span>":"");
  renderMas();
  draw($("d0"),k0,"きょう",true);
@@ -516,18 +520,7 @@ function renderMas(){
    w="ジャーナルと予定を読み直しています（"+dur(Math.floor((Date.now()-ST.want)/1000))+"）";
   }
   btn=(!ST.want||over||ST.err)?"ask":"";
- }else{
-  btn="done|"+(!ST.sync?"idle":(Date.now()-ST.sync>LIMIT?"re":"ing"));
  }
-
- /* 更新まわりの言い分け。経過時間はここに出す（ボタンを毎秒作り直さないため） */
- let note="";
- if(!wait){
-  if(ST.sync&&Date.now()-ST.sync>LIMIT)note="時間がかかっています。もう一度押せます";
-  else if(ST.sync)note="予定を取り直しています（"+dur(Math.floor((Date.now()-ST.sync)/1000))+"）";
-  else if(ST.syncErr)note=ST.syncErr;
- }
- $("msync").textContent=note;
 
  const k=cls+"|"+(html||txt);
  if(tx.dataset.k!==k){
@@ -538,15 +531,24 @@ function renderMas(){
 
  if(row.dataset.k!==btn){
   row.dataset.k=btn;
-  const sy=btn==="done|ing"?'<button id="msyncb" disabled>更新中…</button>':
-           btn==="done|re" ?'<button id="msyncb">もう一度更新</button>':
-           btn.indexOf("done")===0?'<button id="msyncb">更新</button>':"";
-  row.innerHTML=btn.indexOf("done")===0?'<button id="mdone" class="pri">できた</button>'+sy:
+  row.innerHTML=btn==="done"?'<button id="mdone" class="pri">できた</button>':
                 btn==="ask" ?'<button id="mask" class="pri">1マスをたのむ</button>':"";
-  if($("mdone"))$("mdone").onclick=doneMas;
-  if($("mask"))$("mask").onclick=askNext;
-  if($("msyncb"))$("msyncb").onclick=doSync;
+  if(btn==="done")$("mdone").onclick=doneMas;
+  if(btn==="ask")$("mask").onclick=askNext;
  }
+}
+
+/* 更新ボタンと、その下の一行。予定リストを作り直さずにここだけ触る */
+function syncPaint(){
+ const b=$("dsync");if(!b)return;
+ const over=ST.sync&&Date.now()-ST.sync>LIMIT;
+ b.textContent=!ST.sync?"更新":(over?"もう一度":"更新中…");
+ b.disabled=!!ST.sync&&!over;
+ b.onclick=doSync;
+ const n=$("dnote");if(!n)return;
+ n.textContent=over?"時間がかかっています。もう一度押せます":
+   ST.sync?("予定を取り直しています（"+dur(Math.floor((Date.now()-ST.sync)/1000))+"）"):
+   (ST.syncErr||"");
 }
 
 /* できた → なにをやったか書く → ジャーナルに送る → 次をたのむ */
@@ -567,12 +569,12 @@ function doneMas(){
 function doSync(){
  if(ST.sync&&Date.now()-ST.sync<=LIMIT)return;
  ST.sync=Date.now();ST.syncOk=0;ST.syncGen=FGEN;ST.syncErr="";
- save();renderMas();
+ save();syncPaint();
  SEND.next().then(v=>{
   if(v===true)ST.syncOk=1;
   /* Workerの文言は1マス向けなので、更新で押したときは言い換える */
   else{ST.sync=0;ST.syncOk=0;ST.syncErr=String(v).replace(/^次の1マスを頼めません/,"更新を頼めません");}
-  save();renderMas();
+  save();syncPaint();
  });
 }
 function askNext(){
@@ -591,7 +593,9 @@ function draw(box,dk,label,isToday){
  let ni=-1;if(isToday)ni=list.findIndex(e=>mins(e.t)>=cur);
  const p=dk.split("-");
  box.innerHTML='<div class="dh"><b>'+label+'</b><span>'+(+p[1])+"/"+(+p[2])+
-   '</span><i>'+(list.length?list.length+"件":"")+'</i></div>';
+   '</span><i>'+(list.length?list.length+"件":"")+'</i>'+
+   (isToday?'<button class="sync" id="dsync"></button>':"")+'</div>'+
+   (isToday?'<div class="note" id="dnote"></div>':"");
  if(!list.length)box.innerHTML+='<div class="none">なにもない</div>';
  list.forEach((e,i)=>{
   const past=isToday&&e.t!=="--:--"&&mins(e.t)<cur,isNext=i===ni;
@@ -614,6 +618,7 @@ function draw(box,dk,label,isToday){
  a.className="add";a.textContent="＋ 予定を足す";
  a.onclick=()=>editEv({d:dk,t:"",n:""});
  box.appendChild(a);
+ if(isToday)syncPaint();
 }
 function editEv(e){
  sheet('<h3>予定</h3><input id="ft" placeholder="時刻（例 22:00）" value="'+(e.t||"")+
@@ -662,13 +667,16 @@ function boot(){
   if(ST.sync&&!ST.syncOk&&Date.now()-ST.sync<LIMIT)
    SEND.next().then(v=>{if(v===true)ST.syncOk=1;
     else{ST.sync=0;ST.syncErr=String(v).replace(/^次の1マスを頼めません/,"更新を頼めません");}
-    save();renderMas();});
+    save();syncPaint();});
  });
  let n=0;
  setInterval(()=>{
   n++;
-  if(ST.want||ST.sync){if(n%12===0)refetch();renderMas();return;}
-  if(face==="kyou"&&n%30===0)render();
+  const busy=ST.want||ST.sync;
+  if(busy&&n%12===0)refetch();
+  if(ST.want)renderMas();
+  if(ST.sync)syncPaint();
+  if(!busy&&face==="kyou"&&n%30===0)render();
  },1000);
 }
 return {boot:boot,render:render,save:save,
