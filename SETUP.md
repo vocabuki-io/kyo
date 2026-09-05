@@ -96,20 +96,32 @@ kyou
 ```
 index.html
 prompt.md
+prompt-toi.md
 tasks.md
 README.md
 package.json
 package-lock.json
 .gitignore
+_headers
 scripts/  という名前のフォルダ
   fetch.mjs
+  journal.mjs
   fallback.mjs
+  stamp.mjs
+  toi.mjs
+  version.mjs
 .github/  という名前のフォルダ
   workflows/ という名前のフォルダ
     build.yml
+    version.yml
 data/ という名前のフォルダ
   .gitkeep
+  toi.json
 ```
+
+`data/toi.json` には、といの問いが最初から入っています。
+Claudeを繋ぐ（第7章）と、ここが毎日書き換わります。
+繋がなくても、入っているぶんは出ます。
 
 これを全部、さっき作った箱に入れます。
 

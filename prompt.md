@@ -42,7 +42,7 @@ data/raw.json と tasks.md と journal.local.md を読んで、data/events.json 
 
 「tasks」は raw.json の tasks と tasks.md の両方から作る。
 同じ内容が両方にあれば1つにまとめる。日付が近いものを先に置く。
-質問のスロットに差し込むので短く。
+といの問いにも使う（prompt-toi.md）ので短く。
 「8/28 ボカ戻せ：pan / Takuan / モリヤ / ゆう にオファーを送る」なら「8/28のオファー送信」くらいに縮める。
 
 events は加工しない。並び替えも削除もしない。

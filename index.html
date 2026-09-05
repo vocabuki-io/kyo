@@ -349,7 +349,8 @@ function pack(items){
   const d=key(logical(new Date(it.at))),p=d.split("-");
   if(!grp[d]){grp[d]={at:it.at,title:"【とい】"+(+p[1])+"/"+(+p[2]),lines:[]};out.push(grp[d]);}
   grp[d].at=it.at;
-  grp[d].lines.push("・"+flat(it.q)+" → "+flat(it.a)+(it.e?" "+it.e:""));
+  /* カテゴリも書く。どの問いかたが効いたかを、次に骨格を直すとき Claude が読む */
+  grp[d].lines.push("・"+(it.c?"["+flat(it.c)+"] ":"")+flat(it.q)+" → "+flat(it.a)+(it.e?" "+it.e:""));
  });
  return out;
 }
@@ -461,7 +462,7 @@ const K="kyou:v1";
    更新は1マスが変わらないこともあるので、generated が変わったかで終わりを見る。 */
 let ST={ev:[],hide:[],doneMas:"",doneAt:"",want:0,asked:0,err:"",
         sync:0,syncOk:0,syncGen:"",syncErr:""};
-let FE=[],FMAS="",FWHY="",FMASAT="",FTASKS=[],FGEN="";
+let FE=[],FMAS="",FWHY="",FMASAT="",FGEN="";
 const LIMIT=8*60*1000;   // これ以上待ったら、あきらめてもう一度たのめるようにする
 const WD=["日","月","火","水","木","金","土"];
 function load(){try{const r=localStorage.getItem(K);if(r)ST=Object.assign(ST,JSON.parse(r));}catch(e){}}
@@ -653,7 +654,7 @@ function clean(){const l=new Date();l.setDate(l.getDate()-3);ST.ev=ST.ev.filter(
 function refetch(){
  return fetch("./data/events.json?"+Date.now()).then(r=>r.ok?r.json():null).then(j=>{
   if(!j)return;
-  FE=j.events||[];FMAS=j.mas||"";FWHY=j.why||"";FMASAT=j.masAt||"";FTASKS=j.tasks||[];
+  FE=j.events||[];FMAS=j.mas||"";FWHY=j.why||"";FMASAT=j.masAt||"";
   FGEN=j.generated||"";
   if(ST.want&&!waiting()){ST.want=0;ST.asked=0;ST.err="";save();}
   /* 新しく作られたものが届いた。1マスが同じでも更新は済んでいる */
@@ -683,124 +684,84 @@ function boot(){
 }
 return {boot:boot,render:render,save:save,
  mas:function(){return waiting()?"":FMAS;},
- refetch:refetch,
- events:function(){
-  const n=new Date(),ld=logical(n),tm=new Date(ld);tm.setDate(tm.getDate()+1);
-  const ks=[key(ld),key(tm)];
-  return evOf(ks[0]).concat(evOf(ks[1])).map(e=>e.n).filter(Boolean);
- },
- tasks:function(){
-  const a=FTASKS.slice();
-  if(FMAS&&a.indexOf(FMAS)<0)a.push(FMAS);
-  return a;
- }};
+ refetch:refetch};
 })();
 
 /* ================= とい ================= */
 const TOI=(()=>{
 const K="toi:v1";
-const SK=[
-{d:0,c:"定点",t:["今なにしてる?","いまなにしてた?"]},
-{d:0,c:"定点",t:["なに食べた?","なんか食った?","今日の飯なに?","腹になんか入れた?"]},
-{d:0,c:"定点",t:["誰かと話した?","今日だれかと会った?"],yn:1},
-{d:0,c:"願望",t:["今なに食べたい?"]},
-{d:0,c:"願望",t:["行きたいとこある?"],yn:1},
-{d:0,c:"願望",t:["見たいものある?"],yn:1},
-{d:0,c:"願望",t:["会いたい人いる?"],yn:1},
-{d:0,c:"願望",t:["今ほしいものある?"],yn:1},
-{d:1,c:"願望",t:["{願望}、まだやりたい?"],s:"願望",yn:1},
-{d:0,c:"学び",t:["今日なんかわかった?"],yn:1},
-{d:0,c:"学び",t:["わからんことある?"],yn:1},
-{d:0,c:"学び",t:["気になってることある?"],yn:1},
-{d:0,c:"実績",t:["今日のプチ自慢は?"]},
-{d:0,c:"実績",t:["ちょっと笑ったことある?"],yn:1},
-{d:0,c:"実績",t:["今日なんか作った?"],yn:1},
-{d:0,c:"実績",t:["今日なんか直した?"],yn:1},
-{d:0,c:"逆転",t:["おすすめの{ジャンル}教えて"],s:"ジャンル"},
-{d:0,c:"逆転",t:["{店}ってなにがうまい?"],s:"店"},
-{d:1,c:"逆転",t:["{スキル}、最初になにやればいい?"],s:"スキル"},
-{d:1,c:"逆転",t:["{作品}ってなにが良い?"],s:"作品"},
-{d:0,c:"連想",t:["「{語}」でパッと出た言葉は?"],s:"語"},
-{d:0,c:"連想",t:["「{語}」って聞いてなに思い出す?"],s:"語"},
-{d:1,c:"回収",t:["誰かになんか頼まれた?"],yn:1},
-{d:1,c:"回収",t:["買うものある?"],yn:1},
-{d:1,c:"回収",t:["連絡する人いる?"],yn:1},
-{d:1,c:"回収",t:["忘れそうなことある?"],yn:1},
-{d:1,c:"回収",t:["{人}に聞くことあった?"],s:"人",yn:1},
-{d:1,c:"派生",t:["{人}と最近いつ会った?"],s:"人"},
-{d:1,c:"派生",t:["{人}ってなにしてる人?"],s:"人"},
-{d:1,c:"派生",t:["{場所}ってなにがある?"],s:"場所"},
-{d:1,c:"モヤ",t:["モヤっとしたことある?"],yn:1},
-{d:1,c:"モヤ",t:["ひっかかってることある?"],yn:1},
-{d:2,c:"モヤ",t:["頭の中うるさい?"],yn:1},
-{d:0,c:"雑談",t:["今日なに聴いた?"]},
-{d:0,c:"雑談",t:["好きな{ジャンル}なに?"],s:"ジャンル"},
-{d:1,c:"予定",t:["{予定}、なに持ってく?"],s:"予定"},
-{d:1,c:"予定",t:["{予定}、だれと行く?"],s:"予定"},
-{d:1,c:"予定",t:["{予定}、なにで行く?"],s:"予定"},
-{d:1,c:"予定",t:["{予定}の場所どこ?"],s:"予定"},
-{d:2,c:"予定",t:["{予定}のあと、どっか寄る?"],s:"予定",yn:1},
-{d:1,c:"確認",t:["{タスク}、もう終わった?"],s:"タスク",yn:1},
-{d:1,c:"確認",t:["{タスク}、なにが足りない?"],s:"タスク"},
-{d:1,c:"確認",t:["{タスク}、だれかに聞くことある?"],s:"タスク",yn:1},
-{d:2,c:"確認",t:["{タスク}、次の一手はなに?"],s:"タスク"}
+/* 問いはぜんぶ data/toi.json から来る。作っているのは Claude（prompt-toi.md）。
+   ここに問い文は持たない。持つのは、それが一つも無いときの床だけ。 */
+const POOLK="toi:pool:v1";
+const FLOOR=[
+ {q:"今なにしてる?",c:"定点",d:0,yn:false},
+ {q:"腹になんか入れた?",c:"定点",d:0,yn:false},
+ {q:"今日なんかわかった?",c:"学び",d:0,yn:true}
 ];
-const DIC0={
- "人":["ゆらぴ","井上さん","あゆむくん","いっせい","てったくん","うえのさん","ゴマ","扉"],
- "場所":["十条","東十条","歌舞伎町","motion","麺屋こころ","下北沢アルトト","松屋","実家","登別温泉","お台場"],
- "店":["麺屋こころ","下北沢アルトト","松屋"],
- "作品":["テルマエ・ロマエ","ハリーポッター","最果てのパラディン","ドラクエX","マイクラ","クラロワ","ペルソナ","クロノトリガー"],
- "スキル":["マジック","料理","DJ","VJ","Blender","Unity","UE","Claude","照明"],
- "ジャンル":["ラーメン屋","映画","イヤホン","コンビニ飯","漫画","銭湯","ゲーム","アプリ"],
- "語":["霧","団地","火山","トランプ","深夜","ヤグラ","垂れ幕","テト","カルボナーラ","焼き鳥","ボカロ","うなぎ"],
- "願望":["音楽制作","ゲーム制作","キャンプ","大学","ウルフギャング","マジックキャッスル","温泉","実家帰省"]
-};
-const NG=["K","事業家集団","負債","カードブラック","いじめ","父親","借金"];
-const MIX={0:["定点","願望","雑談","連想"],
-           1:["定点","回収","実績","派生","逆転","学び","予定","確認"],
-           2:["定点","派生","モヤ","逆転","回収","実績","願望","予定","確認"]};
+const SEEN_CAP=400;
 const EMO={up:{c:"#e0a63c",n:["😊","😄","🤩"]},rt:{c:"#5b7fb8",n:["😢","😭","😖"]},
  dn:{c:"#c2533f",n:["😠","😡","🤬"]},lf:{c:"#7a9a4e",n:["🤮","🤢","☠️"]}};
-let ST={log:[],dic:{},day:"",asked:[]};
-let queue=[],cur=null,draft="",yn=null;
+let ST={log:[],seen:[]};
+let POOL=[];
+let queue=[],cur=null,draft="",yn=null,booting=false;
 let dragging=false,dir=null,lv=0,flicked=false,holdT=null,sx=0,sy=0;
 const pd=$("tpadbtn"),ring=$("tring"),burst=$("tburst"),lvd=$("tlvdots");
 const PASSHTML='<span style="color:#9aa1a9">パス</span>';
 const nowS=()=>new Date().toLocaleString("ja-JP",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
 
-function load(){try{const r=localStorage.getItem(K);if(r)ST=Object.assign(ST,JSON.parse(r));}catch(e){}
- if(!ST.dic||!Object.keys(ST.dic).length)ST.dic=JSON.parse(JSON.stringify(DIC0));
- const t=key(logical(new Date()));if(ST.day!==t){ST.day=t;ST.asked=[];}}
+function load(){
+ try{const r=localStorage.getItem(K);if(r)ST=Object.assign(ST,JSON.parse(r));}catch(e){}
+ /* 前の版は答えた問いを asked に本文で持っていた。そのまま seen に引き継ぐ。
+    引き継いだら書き戻す。答えないまま閉じても、次に開いたとき残っているように */
+ const old=("asked" in ST)||("dic" in ST)||("day" in ST);
+ if(!Array.isArray(ST.seen))ST.seen=[];
+ /* ST の初期値に seen:[] があるので、「無い」ではなく「空」で見る */
+ if(!ST.seen.length&&Array.isArray(ST.asked))ST.seen=ST.asked.slice(-SEEN_CAP);
+ if(old){delete ST.asked;delete ST.dic;delete ST.day;save();}
+ try{const r=localStorage.getItem(POOLK);if(r)POOL=JSON.parse(r)||[];}catch(e){}
+}
 function save(){try{localStorage.setItem(K,JSON.stringify(ST));}catch(e){}}
+/* 問いを取りに行く。取れたぶんは端末に残す。
+   とい は夜勤中に開くものなので、繋がらないと何も出ない、にはしない。 */
+function fetchPool(){
+ return fetch("./data/toi.json?"+Date.now()).then(r=>r.ok?r.json():null).then(j=>{
+  if(!j||!Array.isArray(j.q)||!j.q.length)return false;
+  POOL=j.q.filter(x=>x&&x.q);
+  try{localStorage.setItem(POOLK,JSON.stringify(POOL));}catch(e){}
+  return true;
+ }).catch(()=>false);
+}
+/* 直近のパスの多さで、その日に出す深さを決める。パスが多い日は浅いものだけ */
 function fogLv(){const r=ST.log.slice(-10);if(r.length<3)return 1;
  const p=r.filter(e=>e.a==="__pass__").length/r.length;return p>.5?0:(p>.2?1:2);}
-function build(k){let t=k.t[Math.floor(Math.random()*k.t.length)];
- if(k.s){const a=(ST.dic[k.s]||[]).filter(w=>NG.indexOf(w)<0);if(!a.length)return null;
-  t=t.replace("{"+k.s+"}",a[Math.floor(Math.random()*a.length)]);}
- return {q:t,c:k.c,yn:!!k.yn};}
-function syncSlots(){
- try{
-  ST.dic["予定"]=(KYOU.events()||[]).filter(w=>w&&w.length<=20);
-  ST.dic["タスク"]=(KYOU.tasks()||[]).filter(w=>w&&w.length<=30);
- }catch(e){ST.dic["予定"]=[];ST.dic["タスク"]=[];}
-}
+function shuffle(a){a=a.slice();
+ for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
+ return a;}
+/* プールから n 問。まだ見ていないものを先に。
+   出し切ったら見たものも混ぜる ── 何も出ないより、もう一度聞かれるほうがまだいい。
+   1問目は「定点」。いちばん答えやすいものから入る（prompt-toi.md と対） */
 function pick(n){
- syncSlots();
- const f=fogLv(),cats=MIX[f],pool=SK.filter(k=>k.d<=f&&cats.indexOf(k.c)>=0);
- const tei=pool.filter(k=>k.c==="定点");
- const out=[build(tei[Math.floor(Math.random()*tei.length)])];
- const used=new Set(ST.asked);let g=0;
- while(out.length<n&&g++<300){
-  const b=build(pool[Math.floor(Math.random()*pool.length)]);
-  if(!b||used.has(b.q)||out.some(o=>o.q===b.q))continue;
-  out.push(b);used.add(b.q);
+ const src=POOL.length?POOL:FLOOR;
+ const f=fogLv();
+ const deep=src.filter(x=>(x.d||0)<=f);
+ const use=deep.length?deep:src;
+ const seen=new Set(ST.seen);
+ const bag=shuffle(use.filter(x=>!seen.has(x.q))).concat(shuffle(use.filter(x=>seen.has(x.q))));
+ const out=[],taken=new Set();
+ const tei=bag.find(x=>x.c==="定点");
+ if(tei){out.push(tei);taken.add(tei.q);}
+ for(const x of bag){
+  if(out.length>=n)break;
+  if(taken.has(x.q))continue;
+  out.push(x);taken.add(x.q);
  }
  return out;
 }
-function learn(t){if(!t||t.length>40)return;
- t.split(/[、,。\s]+/).filter(w=>w.length>=2&&w.length<=12&&NG.indexOf(w)<0)
-  .forEach(w=>{if(ST.dic["語"].indexOf(w)<0)ST.dic["語"].push(w);});
- if(ST.dic["語"].length>200)ST.dic["語"]=ST.dic["語"].slice(-200);}
+/* 出したものは本文で覚える。床とプールに同じ文言があっても、二度は出さない */
+function markSeen(x){
+ ST.seen.push(x.q);
+ if(ST.seen.length>SEEN_CAP)ST.seen=ST.seen.slice(-SEEN_CAP);
+}
 
 function render(){
  $("tfog").style.opacity=[0.7,0.28,0][fogLv()];
@@ -808,6 +769,7 @@ function render(){
  $("tlog").style.display="none";$("tbody").style.display="flex";
  if(!cur){
   $("tpad").style.display="none";
+  if(booting){$("tbody").innerHTML='<div class="tdone"><b>用意しています</b>問いを取りに行っています</div>';return;}
   const m=KYOU.mas();
   $("tbody").innerHTML='<div class="tdone"><b>おわり</b>今日のぶんは以上。'+
    (m?'<div class="mas1"><span>きょうの1マス</span>'+esc(m)+'</div>':"")+
@@ -874,13 +836,13 @@ function commit(){
  const e=dir?EMO[dir].n[lv]:null;
  if(dir)flash(EMO[dir].c);
  let a="__pass__";
- if(has()){a=(yn?yn+(draft.trim()?" / "+draft.trim():""):draft.trim());learn(draft.trim());}
- ST.log.push({t:nowS(),q:cur.q,c:cur.c,a:a,e:e});ST.asked.push(cur.q);
+ if(has()){a=(yn?yn+(draft.trim()?" / "+draft.trim():""):draft.trim());}
+ ST.log.push({t:nowS(),q:cur.q,c:cur.c,a:a,e:e});markSeen(cur);
  if(a!=="__pass__")SEND.toi(cur.q,cur.c,a,e);
  save();resetPad();next();
 }
 $("tskip").onclick=()=>{if(!cur)return;
- ST.log.push({t:nowS(),q:cur.q,c:cur.c,a:"__pass__",e:null});ST.asked.push(cur.q);save();next();};
+ ST.log.push({t:nowS(),q:cur.q,c:cur.c,a:"__pass__",e:null});markSeen(cur);save();next();};
 function next(){draft="";yn=null;cur=queue.shift()||null;render();if(!cur)SEND.flush();}
 $("tblog").onclick=()=>{
  const L=$("tlog");
@@ -899,11 +861,20 @@ $("tbexp").onclick=()=>{
  L.appendChild(ta);ta.select();
  try{navigator.clipboard.writeText(txt);}catch(e){}};
 function wake(){
- const t=key(logical(new Date()));
- if(ST.day!==t){ST.day=t;ST.asked=[];save();}
+ /* 開いたときに取り直す。新しいぶんが来ていたら、今のを出しきってから入れ替わる */
+ fetchPool();
  if(!cur&&!queue.length){queue=pick(3);next();}else render();
 }
-function boot(){load();queue=pick(3);next();}
+function boot(){
+ load();
+ if(POOL.length){queue=pick(3);next();fetchPool();return;}
+ /* 初回。端末にまだ何も無い。取れるまで待つ。
+    ここで床を出してしまうと、初日はClaudeの問いが一問も出ない。 */
+ booting=true;render();
+ /* 返ってこないまま待たせない。時間切れなら床で始める */
+ Promise.race([fetchPool(),new Promise(r=>setTimeout(()=>r(false),6000))])
+  .then(()=>{booting=false;queue=pick(3);next();});
+}
 return {boot:boot,wake:wake};
 })();
 
