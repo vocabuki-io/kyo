@@ -72,6 +72,9 @@ body{background:#0a0d14;
 .mas.wait{box-shadow:none;background:rgba(255,255,255,.03)}
 .mas .tx.thinking{color:var(--task)}
 .mas .row:empty{display:none}
+.mas .note{font-size:11px;color:var(--tx3);margin-top:9px;line-height:1.6}
+.mas .note:empty{display:none}
+.mas .row button:disabled{opacity:.45}
 @keyframes blink{0%,100%{opacity:.35}50%{opacity:1}}
 .mas .tx.thinking .dot{animation:blink 1.3s infinite}
 .mas .row{display:flex;gap:8px;margin-top:12px}
@@ -216,6 +219,7 @@ body{background:#0a0d14;
       <div class="tx empty" id="mtx">読み込み中</div>
       <div class="why" id="mwhy"></div>
       <div class="row" id="mrow"></div>
+      <div class="note" id="msync"></div>
     </div>
     <div class="day" id="d0"></div>
     <div class="day" id="d1"></div>
@@ -446,9 +450,13 @@ const KYOU=(()=>{
 const K="kyou:v1";
 /* doneMas / doneAt … 完了させた1マスの本文と masAt
    want  … 次の1マスを頼んだ時刻。0なら待っていない
-   asked … Workerに頼めたか。err … 頼めなかった理由 */
-let ST={ev:[],hide:[],doneMas:"",doneAt:"",want:0,asked:0,err:""};
-let FE=[],FMAS="",FWHY="",FMASAT="",FTASKS=[];
+   asked … Workerに頼めたか。err … 頼めなかった理由
+   sync … 「更新」を押した時刻。syncGen … 押した時点の generated
+   1マスの入れ替え（want）と、予定の取り直し（sync）は別もの。
+   更新は1マスが変わらないこともあるので、generated が変わったかで終わりを見る。 */
+let ST={ev:[],hide:[],doneMas:"",doneAt:"",want:0,asked:0,err:"",
+        sync:0,syncOk:0,syncGen:"",syncErr:""};
+let FE=[],FMAS="",FWHY="",FMASAT="",FTASKS=[],FGEN="";
 const LIMIT=8*60*1000;   // これ以上待ったら、あきらめてもう一度たのめるようにする
 const WD=["日","月","火","水","木","金","土"];
 function load(){try{const r=localStorage.getItem(K);if(r)ST=Object.assign(ST,JSON.parse(r));}catch(e){}}
@@ -508,7 +516,18 @@ function renderMas(){
    w="ジャーナルと予定を読み直しています（"+dur(Math.floor((Date.now()-ST.want)/1000))+"）";
   }
   btn=(!ST.want||over||ST.err)?"ask":"";
+ }else{
+  btn="done|"+(!ST.sync?"idle":(Date.now()-ST.sync>LIMIT?"re":"ing"));
  }
+
+ /* 更新まわりの言い分け。経過時間はここに出す（ボタンを毎秒作り直さないため） */
+ let note="";
+ if(!wait){
+  if(ST.sync&&Date.now()-ST.sync>LIMIT)note="時間がかかっています。もう一度押せます";
+  else if(ST.sync)note="予定を取り直しています（"+dur(Math.floor((Date.now()-ST.sync)/1000))+"）";
+  else if(ST.syncErr)note=ST.syncErr;
+ }
+ $("msync").textContent=note;
 
  const k=cls+"|"+(html||txt);
  if(tx.dataset.k!==k){
@@ -519,10 +538,14 @@ function renderMas(){
 
  if(row.dataset.k!==btn){
   row.dataset.k=btn;
-  row.innerHTML=btn==="done"?'<button id="mdone" class="pri">できた</button>':
+  const sy=btn==="done|ing"?'<button id="msyncb" disabled>更新中…</button>':
+           btn==="done|re" ?'<button id="msyncb">もう一度更新</button>':
+           btn.indexOf("done")===0?'<button id="msyncb">更新</button>':"";
+  row.innerHTML=btn.indexOf("done")===0?'<button id="mdone" class="pri">できた</button>'+sy:
                 btn==="ask" ?'<button id="mask" class="pri">1マスをたのむ</button>':"";
-  if(btn==="done")$("mdone").onclick=doneMas;
-  if(btn==="ask")$("mask").onclick=askNext;
+  if($("mdone"))$("mdone").onclick=doneMas;
+  if($("mask"))$("mask").onclick=askNext;
+  if($("msyncb"))$("msyncb").onclick=doSync;
  }
 }
 
@@ -538,6 +561,19 @@ function doneMas(){
   ask();
  });
  setTimeout(()=>{const e=$("fmemo");if(e)e.focus();},140);
+}
+/* 更新 … cronを待たずに、いま予定とタスクを取り直させる。
+   1マスは変わることも変わらないこともある。終わりは generated で見る。 */
+function doSync(){
+ if(ST.sync&&Date.now()-ST.sync<=LIMIT)return;
+ ST.sync=Date.now();ST.syncOk=0;ST.syncGen=FGEN;ST.syncErr="";
+ save();renderMas();
+ SEND.next().then(v=>{
+  if(v===true)ST.syncOk=1;
+  /* Workerの文言は1マス向けなので、更新で押したときは言い換える */
+  else{ST.sync=0;ST.syncOk=0;ST.syncErr=String(v).replace(/^次の1マスを頼めません/,"更新を頼めません");}
+  save();renderMas();
+ });
 }
 function askNext(){
  if(!ST.want)ST.want=Date.now();
@@ -611,7 +647,10 @@ function refetch(){
  return fetch("./data/events.json?"+Date.now()).then(r=>r.ok?r.json():null).then(j=>{
   if(!j)return;
   FE=j.events||[];FMAS=j.mas||"";FWHY=j.why||"";FMASAT=j.masAt||"";FTASKS=j.tasks||[];
+  FGEN=j.generated||"";
   if(ST.want&&!waiting()){ST.want=0;ST.asked=0;ST.err="";save();}
+  /* 新しく作られたものが届いた。1マスが同じでも更新は済んでいる */
+  if(ST.sync&&FGEN&&FGEN!==ST.syncGen){ST.sync=0;ST.syncOk=0;ST.syncErr="";save();}
   render();}).catch(()=>{});
 }
 function boot(){
@@ -619,11 +658,16 @@ function boot(){
  refetch().then(()=>{
   /* 前回たのめないまま閉じたぶんを、開いたときに拾う */
   if(ST.want&&!ST.asked&&Date.now()-ST.want<LIMIT)ask();
+  /* 更新を頼めないまま閉じたぶんも拾う */
+  if(ST.sync&&!ST.syncOk&&Date.now()-ST.sync<LIMIT)
+   SEND.next().then(v=>{if(v===true)ST.syncOk=1;
+    else{ST.sync=0;ST.syncErr=String(v).replace(/^次の1マスを頼めません/,"更新を頼めません");}
+    save();renderMas();});
  });
  let n=0;
  setInterval(()=>{
   n++;
-  if(ST.want){if(n%12===0)refetch();renderMas();return;}
+  if(ST.want||ST.sync){if(n%12===0)refetch();renderMas();return;}
   if(face==="kyou"&&n%30===0)render();
  },1000);
 }
